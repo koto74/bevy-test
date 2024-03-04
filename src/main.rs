@@ -24,6 +24,12 @@ fn main() {
         .add_plugins(DefaultPlugins) // ウィンドウやスケジュールなどの基本的な機能を追加
         .add_systems(Startup, setup)
         .add_systems(
+            FixedUpdate,
+            (
+                apply_velocity,
+            )
+        )
+        .add_systems(
             Update,
             (
                 bevy::window::close_on_esc, // Escキーでウィンドウを閉じる
@@ -86,18 +92,15 @@ impl WallLocation {
 }
 
 impl WallBundle {
-    // This "builder method" allows us to reuse logic across our wall entities,
-    // making our code easier to read and less prone to bugs when we change the logic
     fn new(location: WallLocation) -> WallBundle {
         WallBundle {
             sprite_bundle: SpriteBundle {
                 transform: Transform {
-                    // We need to convert our Vec2 into a Vec3, by giving it a z-coordinate
-                    // This is used to determine the order of our sprites
+                    // Vec2をVec3に変換する必要があります。これは、スプライトの順序を決定するために使用されます
                     translation: location.position().extend(0.0),
-                    // The z-scale of 2D objects must always be 1.0,
-                    // or their ordering will be affected in surprising ways.
-                    // See https://github.com/bevyengine/bevy/issues/4149
+                    // 2Dオブジェクトのzスケールは常に1.0でなければなりません。
+                    // そうでないと、スプライトの順序が予想外の方法で影響を受けます。
+                    // 詳細は https://github.com/bevyengine/bevy/issues/4149 を参照してください
                     scale: location.size().extend(1.0),
                     ..default()
                 },
@@ -146,4 +149,11 @@ fn setup(
     commands.spawn(WallBundle::new(WallLocation::Bottom));
     commands.spawn(WallBundle::new(WallLocation::Top));
 
+}
+
+fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>, time: Res<Time>) {
+    for (mut transform, velocity) in &mut query {
+        transform.translation.x += velocity.0.x * time.delta_seconds();
+        transform.translation.y += velocity.0.y * time.delta_seconds();
+    }
 }

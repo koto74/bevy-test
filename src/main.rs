@@ -1,4 +1,5 @@
 use bevy::{
+    math::bounding::{Aabb2d, BoundingCircle, IntersectsVolume},
     prelude::*,
     sprite::MaterialMesh2dBundle,
 };
@@ -22,11 +23,13 @@ const INITIAL_BALL_DIRECTION: Vec2 = Vec2::new(0.5, -0.5);
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins) // ウィンドウやスケジュールなどの基本的な機能を追加
+        .add_event::<CollisionEvent>()
         .add_systems(Startup, setup)
         .add_systems(
             FixedUpdate,
             (
                 apply_velocity,
+                check_for_collisions,
             )
         )
         .add_systems(
@@ -47,15 +50,15 @@ struct Velocity(Vec2);
 #[derive(Component)]
 struct Collider;
 
+#[derive(Event, Default)]
+struct CollisionEvent;
+
 #[derive(Bundle)]
 struct WallBundle {
-    // You can nest bundles inside of other bundles like this
-    // Allowing you to compose their functionality
     sprite_bundle: SpriteBundle,
     collider: Collider,
 }
 
-/// Which side of the arena is this wall located on?
 enum WallLocation {
     Left,
     Right,
@@ -76,7 +79,7 @@ impl WallLocation {
     fn size(&self) -> Vec2 {
         let arena_height = TOP_WALL - BOTTOM_WALL;
         let arena_width = RIGHT_WALL - LEFT_WALL;
-        // Make sure we haven't messed up our constants
+        // 定数を間違えていないか確認します
         assert!(arena_height > 0.0);
         assert!(arena_width > 0.0);
 
@@ -156,4 +159,83 @@ fn apply_velocity(mut query: Query<(&mut Transform, &Velocity)>, time: Res<Time>
         transform.translation.x += velocity.0.x * time.delta_seconds();
         transform.translation.y += velocity.0.y * time.delta_seconds();
     }
+}
+
+fn check_for_collisions(
+    mut commands: Commands,
+    mut ball_query: Query<(&mut Velocity, &Transform), With<Ball>>,
+    collider_query: Query<(Entity, &Transform), With<Collider>>,
+    mut collision_events: EventWriter<CollisionEvent>,
+) {
+    let (mut ball_velocity, ball_transform) = ball_query.single_mut();
+
+    // すべてのコライダーとボールの位置をチェック
+    for (collider_entity, transform) in &collider_query {
+        let collision = collide_with_side(
+            BoundingCircle::new(ball_transform.translation.truncate(), BALL_DIAMETER / 2.),
+            Aabb2d::new(
+                transform.translation.truncate(),
+                transform.scale.truncate() / 2.,
+            ),
+        );
+
+        if let Some(collision) = collision {
+            // 他のシステムが衝突に反応できるように、衝突イベントを送信します
+            collision_events.send_default();
+
+            // 衝突したときにボールを反射させる
+            let mut reflect_x = false;
+            let mut reflect_y = false;
+
+            // only reflect if the ball's velocity is going in the opposite direction of the
+            // collision
+            match collision {
+                Collision::Left => reflect_x = ball_velocity.0.x > 0.0,
+                Collision::Right => reflect_x = ball_velocity.0.x < 0.0,
+                Collision::Top => reflect_y = ball_velocity.0.y < 0.0,
+                Collision::Bottom => reflect_y = ball_velocity.0.y > 0.0,
+            }
+
+            // x軸で何かに当たった場合は、速度をx軸に反射させる
+            if reflect_x {
+                ball_velocity.0.x = -ball_velocity.0.x;
+            }
+
+            // y軸で何かに当たった場合は、速度をy軸に反射させる
+            if reflect_y {
+                ball_velocity.0.y = -ball_velocity.0.y;
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+enum Collision {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+fn collide_with_side(ball: BoundingCircle, wall: Aabb2d) -> Option<Collision> {
+    // ボールが壁と交差していない場合は、Noneを返します
+    if !ball.intersects(&wall) {
+        return None;
+    }
+
+    let closest = wall.closest_point(ball.center);
+    let offset = ball.center - closest;
+    let side = if offset.x.abs() > offset.y.abs() {
+        if offset.x < 0. {
+            Collision::Left
+        } else {
+            Collision::Right
+        }
+    } else if offset.y > 0. {
+        Collision::Top
+    } else {
+        Collision::Bottom
+    };
+
+    Some(side)
 }
